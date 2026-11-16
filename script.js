@@ -12,8 +12,8 @@ const DRIFT_LIMIT = POLES[0].tipY + 58; // rings can't float above this on their
 // Air jets blow up-and-inward. Default 55 degrees from horizontal; the player can
 // rotate the pump knobs to adjust each jet between 30 and 75 degrees.
 const JETS = {
-  left:  { x: 105, originX: 105, originY: SAND_Y, angle: 55, dirSign: 1,  dx: 0.574, dy: -0.819, active: false },
-  right: { x: 535, originX: 535, originY: SAND_Y, angle: 55, dirSign: -1, dx: -0.574, dy: -0.819, active: false }
+  left:  { x: 70, originX: 70, originY: SAND_Y, angle: 55, dirSign: 1,  dx: 0.574, dy: -0.819, active: false },
+  right: { x: 570, originX: 570, originY: SAND_Y, angle: 55, dirSign: -1, dx: -0.574, dy: -0.819, active: false }
 };
 function updateJetDir(j) {
   const rad = j.angle * Math.PI / 180;
@@ -36,7 +36,7 @@ const startBtn = document.getElementById('startBtn');
 const bgmBtn = document.getElementById('bgmBtn');
 
 /* ============ Audio: all synthesized, no files needed ============ */
-let AC = null, bgmOn = true, sfxOn = true, bgmTimer = null, bgmStep = 0;
+let AC = null, bgmOn = true, sfxOn = true, bgmTimer = null, bgmStep = 0, bgmMelodyTimer = null, bgmMelodyStep = 0;
 let bgmWanted = false, audioWatchStarted = false, mediaUnlockEl = null;
 /* v7 audio unlock: external browsers (iOS Safari / WeChat webview) suspend the
    AudioContext and silently drop notes scheduled into it. So: unlock on ANY
@@ -152,7 +152,7 @@ const sfx = new Proxy(sfxRaw, {
 /* BGM is per-mode now (sound effects are NOT changed - only the music):
    normal = the same slow gentle pads; hard = a faster minor-key chase
    ("you chase me, I chase you") with a soft bass pulse; easy = a cheerful
-   major-key tune that sounds like it's giggling. All pad tones with slow
+   major-key tune with a bouncy little melody on top, so it sounds like it's giggling. All pad tones with slow
    attack - no plucked notes, so nothing can read as ticking. */
 const BGM_SETS = {
   normal: { chords: [
@@ -172,7 +172,11 @@ const BGM_SETS = {
     [43, 47, 50, 59],  // G
     [45, 52, 57, 60],  // Am
     [41, 48, 53, 57]   // F
-  ], interval: 1200, bass: true, bright: true }
+  ], interval: 1200, bass: true, bright: true,
+    /* a real cheerful tune on top of the pads (C-major pentatonic, soft sine
+       notes with the same slow attack as the pads, so nothing can tick):
+       E G A G | E D E - | E G A C' | G E D C - a little "sneaky happy" melody */
+    melody: [76, 79, 81, 79, 76, 74, 76, 0, 76, 79, 81, 84, 79, 76, 74, 72], melodyStep: 320 }
 };
 function startBGM() {
   if (!bgmOn || bgmTimer) return;
@@ -190,8 +194,22 @@ function startBGM() {
   };
   playChord();
   bgmTimer = setInterval(playChord, set.interval);
+  if (set.melody) {
+    bgmMelodyStep = 0;
+    const playMelody = () => {
+      const n = set.melody[bgmMelodyStep % set.melody.length];
+      if (n) padTone(n, 0.55, 0.02); // soft sine note, slow attack - a tune, not a tick
+      bgmMelodyStep++;
+    };
+    playMelody();
+    bgmMelodyTimer = setInterval(playMelody, set.melodyStep);
+  }
 }
-function stopBGM() { bgmWanted = false; if (bgmTimer) { clearInterval(bgmTimer); bgmTimer = null; } }
+function stopBGM() {
+  bgmWanted = false;
+  if (bgmTimer) { clearInterval(bgmTimer); bgmTimer = null; }
+  if (bgmMelodyTimer) { clearInterval(bgmMelodyTimer); bgmMelodyTimer = null; }
+}
 /* Blowing sound: one continuous soft air/water noise while a jet is on.
    Deliberately NOT repeated beeps - the old per-bubble sine blips every 110ms
    were the harsh "di-di-di" the player complained about. */
@@ -464,15 +482,20 @@ document.addEventListener('keyup', e => {
   if (j) { JETS[j].active = false; document.getElementById(j + 'Btn').classList.remove('pressed'); }
 });
 
-/* Last 6 seconds of the invincible version: a few free rings FLY UP onto the
-   poles by themselves. They launch upward out of the water, arc over the
-   pole tips and drop on - the old version just sank them onto the pole bases,
-   which looked like nothing happened. */
+/* Last 6 seconds of the invincible version: EVERY free ring flies up onto the
+   poles by itself - the whole tank empties onto the poles. Rings launch
+   upward out of the water, arc over the pole tips and drop on. */
 function autoLandRings() {
-  const free = rings.filter(r => r.state === 'free').sort((a, b) => b.y - a.y); // lowest first
-  free.slice(0, 4).forEach(r => {
-    const p = POLES[0].landed <= POLES[1].landed ? POLES[0] : POLES[1];
-    r.state = 'flying'; r.pole = POLES.indexOf(p);
+  const free = rings.filter(r => r.state === 'free');
+  /* count rings already on (or flying to) each pole, so the finale splits
+     evenly across both poles instead of piling onto one side */
+  const assigned = [0, 0];
+  rings.forEach(r => { if (r.pole >= 0 && r.state !== 'free') assigned[r.pole]++; });
+  free.forEach(r => {
+    let pi = assigned[0] <= assigned[1] ? 0 : 1;
+    if (assigned[0] === assigned[1]) pi = r.x < W / 2 ? 0 : 1; // tie: nearest pole
+    assigned[pi]++;
+    r.state = 'flying'; r.pole = pi;
     r.vx = 0; r.vy = -3.5; r.flyT = 0; // launch upward right away
   });
 }
@@ -522,6 +545,8 @@ function stepPhysics(t) {
       r.vy += 0.03 + Math.cos(t / 800 + r.x * 0.01) * 0.006;
       r.vx += Math.sin(t / 700 + r.y * 0.012 + r.phase) * 0.02;
       if (Math.abs(r.x - CENTER_VENT.x) < 66 && r.y > 150) r.vy -= 0.07; // gentle centre vent, wider range, same strength
+      if (r.x < 90) r.vx += 0.02;
+      else if (r.x > W - 90) r.vx -= 0.02;
       if (r.y < driftLimit()) r.vy += 0.14;
       r.vy *= 0.965; r.vx *= 0.982;
       r.x += r.vx; r.y += r.vy;
@@ -574,6 +599,10 @@ function stepPhysics(t) {
     // It keeps every ring drifting and tumbling, but is far too weak to lift a ring over a pole tip.
     r.vx += Math.sin(t / 700 + r.y * 0.012 + r.phase) * 0.02 + Math.sin(t / 1400 + r.x * 0.004) * 0.012;
     r.vy += Math.cos(t / 800 + r.x * 0.01) * 0.009;
+    /* rings camped at the far left/right walls are out of the jets' reach -
+       the water slowly carries them back toward the middle */
+    if (r.x < 90) r.vx += 0.02;
+    else if (r.x > W - 90) r.vx -= 0.02;
     r.lift = Math.max(0, r.lift - 1);
     for (const k of ['left', 'right']) {
       if (!JETS[k].active) continue;
@@ -582,7 +611,7 @@ function stepPhysics(t) {
       const along = relX * j.dx + relY * j.dy;                // distance along the 55-degree jet
       const perpX = relX - along * j.dx, perpY = relY - along * j.dy;
       const perp = Math.hypot(perpX, perpY);                  // distance from the jet axis
-      if (along > 0 && along < 430 && perp < 46 + along * 0.17) {
+      if (along > 0 && along < 470 && perp < 58 + along * 0.2) {
         const a = (mode === 'easy' ? 1.15 : 0.78) * (1 - along / 470);
         r.vx += j.dx * a + (Math.random() - 0.5) * 0.1;
         r.vy += j.dy * a + (Math.random() - 0.5) * 0.06;
