@@ -172,7 +172,7 @@ const BGM_SETS = {
     [43, 47, 50, 59],  // G
     [45, 52, 57, 60],  // Am
     [41, 48, 53, 57]   // F
-  ], interval: 1400, bright: true }
+  ], interval: 1200, bass: true, bright: true }
 };
 function startBGM() {
   if (!bgmOn || bgmTimer) return;
@@ -185,7 +185,7 @@ function startBGM() {
     chord.forEach(n => padTone(n, set.interval / 1000 + 0.3, 0.024));
     if (set.bass) padTone(chord[0] - 12, 1.0, 0.02);       // soft low pulse: the chase heartbeat
     else padTone(chord[1] + 12, 2.1, 0.01);
-    if (set.bright) padTone(chord[0] + 12, 1.6, 0.012);    // bright top note: the giggle
+    if (set.bright) padTone(chord[0] + 12, 1.6, 0.02);     // bright top note: the giggle, loud enough to hear
     bgmStep++;
   };
   playChord();
@@ -464,12 +464,16 @@ document.addEventListener('keyup', e => {
   if (j) { JETS[j].active = false; document.getElementById(j + 'Btn').classList.remove('pressed'); }
 });
 
-/* Last 6 seconds of the invincible version: a few free rings fly onto the poles by themselves. */
+/* Last 6 seconds of the invincible version: a few free rings FLY UP onto the
+   poles by themselves. They launch upward out of the water, arc over the
+   pole tips and drop on - the old version just sank them onto the pole bases,
+   which looked like nothing happened. */
 function autoLandRings() {
-  const free = rings.filter(r => r.state === 'free').sort((a, b) => b.y - a.y); // lowest first: nearest the pole bases
+  const free = rings.filter(r => r.state === 'free').sort((a, b) => b.y - a.y); // lowest first
   free.slice(0, 4).forEach(r => {
     const p = POLES[0].landed <= POLES[1].landed ? POLES[0] : POLES[1];
-    r.state = 'landing'; r.pole = POLES.indexOf(p); r.slot = p.landed++; r.vx = r.vy = 0;
+    r.state = 'flying'; r.pole = POLES.indexOf(p);
+    r.vx = 0; r.vy = -3.5; r.flyT = 0; // launch upward right away
   });
 }
 
@@ -539,6 +543,27 @@ function stepPhysics(t) {
         r.y = targetY; r.state = 'landed'; score++; updateHUD(); sfx.success();
         if (score >= ringTotal) { setTimeout(endGame, 450); state = 'ending'; }
       }
+      continue;
+    }
+    if (r.state === 'flying') {
+      const p = POLES[r.pole];
+      r.flyT = (r.flyT || 0) + 1;
+      /* rise fast, steering toward the pole tip; a few bubbles mark the trail */
+      r.vy = Math.max(-4.6, r.vy - 0.32);
+      r.vx += (p.x - r.x) * 0.03; r.vx *= 0.94;
+      r.x += r.vx; r.y += r.vy;
+      r.angle = Math.max(-0.5, Math.min(0.5, r.angle + r.vx * 0.01));
+      if (Math.random() < 0.35) spawnBubble(r.x, r.y + 12, false, 0, -0.5);
+      if (r.y < p.tipY - 34 && Math.abs(r.x - p.x) < 14) {
+        /* above the tip and centred: thread it on, then slide down to its slot */
+        r.state = 'landing'; r.x = p.x; r.slot = p.landed++; r.vx = r.vy = 0;
+      } else if (r.flyT > 170) {
+        /* safety: never hover forever - drop it onto the pole from wherever it is */
+        r.state = 'landing'; r.slot = p.landed++; r.vx = r.vy = 0;
+      }
+      if (r.x < r.r) { r.x = r.r; r.vx = Math.abs(r.vx) * 0.5; }
+      if (r.x > W - r.r) { r.x = W - r.r; r.vx = -Math.abs(r.vx) * 0.5; }
+      if (r.y < 20) { r.y = 20; r.vy = Math.abs(r.vy) * 0.3; }
       continue;
     }
     r.prevY = r.y;
