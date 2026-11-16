@@ -169,7 +169,7 @@ const BGM_SETS = {
   ], interval: 950, bass: true,
     /* a hurried chase tune on top (A-minor pentatonic, same soft sine voice):
        A C D E | G E D C | D E G A | G E D C - "you chase me, I chase you" */
-    melody: [69, 72, 74, 76, 79, 76, 74, 72, 74, 76, 79, 81, 79, 76, 74, 72], melodyStep: 260 },
+    melody: [69, 72, 74, 76, 79, 76, 74, 72, 74, 76, 79, 81, 79, 76, 74, 72], melodyStep: 230, melodyVol: 0.035 },
   easy: { chords: [
     [48, 52, 55, 60],  // C
     [43, 47, 50, 59],  // G
@@ -201,7 +201,7 @@ function startBGM() {
     bgmMelodyStep = 0;
     const playMelody = () => {
       const n = set.melody[bgmMelodyStep % set.melody.length];
-      if (n) padTone(n, 0.55, 0.02); // soft sine note, slow attack - a tune, not a tick
+      if (n) padTone(n, 0.55, set.melodyVol || 0.02); // soft sine note, slow attack - a tune, not a tick
       bgmMelodyStep++;
     };
     playMelody();
@@ -341,7 +341,9 @@ function endGame() {
   document.querySelectorAll('.pump').forEach(b => b.classList.remove('pressed'));
   if (mode === 'easy') {
     ovTitle.textContent = '玩家无敌了！👑';
-    ovText.innerHTML = `60 秒你套中了 <b>${score} / ${ringTotal}</b> 个圈！<br/>最后 6 秒圈圈自己飞上杆子——无敌！`;
+    ovText.innerHTML = score >= ringTotal
+      ? `你套中了全部 <b>${ringTotal}</b> 个圈，你无敌了！`
+      : `60 秒你套中了 <b>${score} / ${ringTotal}</b> 个圈，你无敌了！`;
     startBtn.textContent = '再来一局';
     overlay.classList.remove('hidden');
     sfx.victory();
@@ -510,10 +512,13 @@ function spawnBubble(x, y, big = false, vx = 0, vy = null) {
 }
 function stepPhysics(t) {
   updateJetDir(JETS.left); updateJetDir(JETS.right);
-  /* hard version: both poles slide left-right together, keeping their distance */
-  if (mode === 'hard' && state === 'playing') {
+  /* hard version: both poles slide left-right together, keeping their distance.
+     On the home screen (idle) they keep sliding too, so you can see them move. */
+  if (mode === 'hard' && (state === 'playing' || state === 'idle')) {
     const off = Math.sin(poleClock / 850) * 55;
     POLES.forEach(p => p.x = p.baseX + off);
+  } else if (mode !== 'hard') {
+    POLES.forEach(p => p.x = p.baseX);
   }
   const jetOn = JETS.left.active || JETS.right.active;
   if (jetOn && state === 'playing') {
@@ -913,6 +918,8 @@ function frame(now) {
     timerEl.classList.toggle('warn', timeLeft <= 10.5);
     if (timeLeft <= 0) { timeLeft = 0; updateHUD(); endGame(); }
     updateHUD();
+  } else if (state === 'idle' && mode === 'hard') {
+    poleClock += dt; // home-screen preview: the poles keep sliding so you can see them move
   }
   /* run physics in fixed-ish steps relative to 60fps */
   const steps = Math.max(1, Math.round(dt / 16.7));
