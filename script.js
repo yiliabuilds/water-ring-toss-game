@@ -5,8 +5,8 @@ const ctx = canvas.getContext('2d');
 const W = canvas.width, H = canvas.height;
 const SAND_Y = 545;
 const POLES = [
-  { x: 210, tipY: 245, baseY: SAND_Y, landed: 0 },
-  { x: 430, tipY: 245, baseY: SAND_Y, landed: 0 }
+  { x: 210, baseX: 210, tipY: 245, baseY: SAND_Y, landed: 0 },
+  { x: 430, baseX: 430, tipY: 245, baseY: SAND_Y, landed: 0 }
 ];
 const DRIFT_LIMIT = POLES[0].tipY + 58; // rings can't float above this on their own
 // Air jets blow up-and-inward. Default 55 degrees from horizontal; the player can
@@ -149,25 +149,47 @@ const sfx = new Proxy(sfxRaw, {
 /* BGM v6: slow PAD CHORDS, not plucked notes. Even the gentle music-box melody
    was heard as "di-da" ticking because every note had a short pluck envelope.
    Now four soft chords cross-fade every ~1.8s - a calm wash with no rhythm hits. */
-const BGM_CHORDS = [
-  [48, 52, 55, 59],  // Cmaj7
-  [45, 48, 52, 55],  // Am7
-  [41, 45, 48, 52],  // Fmaj7
-  [43, 47, 50, 55]   // G6
-];
+/* BGM is per-mode now (sound effects are NOT changed - only the music):
+   normal = the same slow gentle pads; hard = a faster minor-key chase
+   ("you chase me, I chase you") with a soft bass pulse; easy = a cheerful
+   major-key tune that sounds like it's giggling. All pad tones with slow
+   attack - no plucked notes, so nothing can read as ticking. */
+const BGM_SETS = {
+  normal: { chords: [
+    [48, 52, 55, 59],  // Cmaj7
+    [45, 48, 52, 55],  // Am7
+    [41, 45, 48, 52],  // Fmaj7
+    [43, 47, 50, 55]   // G6
+  ], interval: 1800 },
+  hard: { chords: [
+    [45, 52, 57, 60],  // Am
+    [41, 48, 53, 57],  // F
+    [38, 45, 50, 57],  // Dm
+    [40, 44, 47, 52]   // E
+  ], interval: 950, bass: true },
+  easy: { chords: [
+    [48, 52, 55, 60],  // C
+    [43, 47, 50, 59],  // G
+    [45, 52, 57, 60],  // Am
+    [41, 48, 53, 57]   // F
+  ], interval: 1400, bright: true }
+};
 function startBGM() {
   if (!bgmOn || bgmTimer) return;
   bgmWanted = true;
   if (!AC || AC.state !== 'running') { ensureAudio(); return; } // watcher starts it once running
   bgmStep = 0;
+  const set = BGM_SETS[mode] || BGM_SETS.normal;
   const playChord = () => {
-    const chord = BGM_CHORDS[bgmStep % BGM_CHORDS.length];
-    chord.forEach(n => padTone(n, 2.1, 0.024));
-    padTone(chord[1] + 12, 2.1, 0.01);
+    const chord = set.chords[bgmStep % set.chords.length];
+    chord.forEach(n => padTone(n, set.interval / 1000 + 0.3, 0.024));
+    if (set.bass) padTone(chord[0] - 12, 1.0, 0.02);       // soft low pulse: the chase heartbeat
+    else padTone(chord[1] + 12, 2.1, 0.01);
+    if (set.bright) padTone(chord[0] + 12, 1.6, 0.012);    // bright top note: the giggle
     bgmStep++;
   };
   playChord();
-  bgmTimer = setInterval(playChord, 1800);
+  bgmTimer = setInterval(playChord, set.interval);
 }
 function stopBGM() { bgmWanted = false; if (bgmTimer) { clearInterval(bgmTimer); bgmTimer = null; } }
 /* Blowing sound: one continuous soft air/water noise while a jet is on.
@@ -230,6 +252,23 @@ soundBtn.addEventListener('click', () => {
 /* ============ Game state ============ */
 let state = 'idle'; // idle | playing | ended
 let score = 0, timeLeft = 60, lastTickSecond = -1, lastTime = performance.now(), alerted10 = false;
+
+/* ============ Modes: normal / hard (moving poles) / easy (invincible) ============ */
+const MODES = {
+  normal: { name: '普通版',
+    desc: '12 个圈都在水里自己飘，但飘不到杆顶<br/>按住左右吹气按钮，把圈吹过杆尖套进去！',
+    howto: '玩法：点开始后圈会自己慢慢飘（但到不了杆顶）→ 按住吹气把圈吹上去 → 对准杆尖落下套住。60 秒内套中越多越好，套中 6 个以上有胜利结局音效！' },
+  hard: { name: '移动版',
+    desc: '杆子会左右来回移动！<br/>等杆子移到圈的上方再吹气，套中更难啦',
+    howto: '玩法：杆子来回移动！等杆子移到圈的上方再吹气 → 对准杆尖落下套住。60 秒内套中越多越好，套中 6 个以上有胜利结局音效！' },
+  easy: { name: '无敌版',
+    desc: '试试就知道！😉',
+    howto: '玩法：这个版本有点不一样，亲自试一局就知道啦！' }
+};
+let mode = 'normal';
+let closed = false; // the game was closed via the ✕ button; the big button reopens home first
+let poleClock = 0, autoDone = false;
+function driftLimit() { return mode === 'easy' ? POLES[0].tipY + 18 : DRIFT_LIMIT; }
 let rings = [], bubbles = [], lastBubbleSfx = 0, lastMissSfx = 0;
 
 const fishes = [
@@ -238,10 +277,16 @@ const fishes = [
   { x: 300, baseY: 62, speed: 0.7, dir: 1, scale: 0.62, type: 'yellow', phase: 4.2 }
 ];
 
+/* Easy (invincible) version gets 20 rings instead of 12, laid out 10 per row. */
+let ringTotal = 12;
 function makeRings() {
-  rings = RING_COLORS.map((color, i) => ({
-    x: 62 + (i % 7) * 82 + (Math.random() * 22 - 11),
-    y: 452 + Math.floor(i / 7) * 52 + (Math.random() * 16 - 8),
+  ringTotal = mode === 'easy' ? 20 : 12;
+  const perRow = ringTotal === 20 ? 10 : 7;
+  const xs = ringTotal === 20 ? 38 : 62, dx = ringTotal === 20 ? 62 : 82;
+  const y0 = ringTotal === 20 ? 458 : 452, dy = ringTotal === 20 ? 56 : 52;
+  rings = Array.from({ length: ringTotal }, (_, i) => RING_COLORS[i % RING_COLORS.length]).map((color, i) => ({
+    x: xs + (i % perRow) * dx + (Math.random() * 22 - 11),
+    y: y0 + Math.floor(i / perRow) * dy + (Math.random() * 16 - 8),
     vx: 0, vy: 0, angle: Math.random() * 0.5 - 0.25, va: 0,
     r: 27, color, phase: Math.random() * Math.PI * 2,
     state: 'free', pole: -1, lift: 0, hitCd: 0, wasHigh: false, prevY: 0
@@ -250,13 +295,14 @@ function makeRings() {
 makeRings();
 
 function resetGame() {
-  POLES.forEach(p => p.landed = 0);
+  POLES.forEach(p => { p.landed = 0; p.x = p.baseX; });
+  poleClock = 0; autoDone = false;
   score = 0; timeLeft = 60; lastTickSecond = -1; alerted10 = false; bubbles = [];
   makeRings(); updateHUD();
   timerEl.classList.remove('warn');
 }
 function updateHUD() {
-  scoreEl.textContent = `RING ${score} / 12`;
+  scoreEl.textContent = `RING ${score} / ${ringTotal}`;
   const s = Math.max(0, Math.ceil(timeLeft));
   timerEl.textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
@@ -268,19 +314,82 @@ function startGame() {
   stopBGM(); startBGM(); sfx.start();
 }
 function endGame() {
+  if (state !== 'playing' && state !== 'ending') return; // the round was already left via 首页/关闭
   state = 'ended'; stopBGM(); stopJetNoise();
   JETS.left.active = JETS.right.active = false;
   document.querySelectorAll('.pump').forEach(b => b.classList.remove('pressed'));
+  if (mode === 'easy') {
+    ovTitle.textContent = '玩家无敌了！👑';
+    ovText.innerHTML = `60 秒你套中了 <b>${score} / ${ringTotal}</b> 个圈！<br/>最后 6 秒圈圈自己飞上杆子——无敌！`;
+    startBtn.textContent = '再来一局';
+    overlay.classList.remove('hidden');
+    sfx.victory();
+    return;
+  }
   const many = score >= 6;
   ovTitle.textContent = many ? '太厉害了！🎉' : '差一点点～';
   ovText.innerHTML = many
-    ? `60 秒你套中了 <b>${score} / 12</b> 个圈！<br/>这手感，小时候的你都佩服`
-    : `60 秒套中了 <b>${score} / 12</b> 个圈<br/>就差一点，多按两下吹气再试试`;
+    ? `60 秒你套中了 <b>${score} / ${ringTotal}</b> 个圈！<br/>这手感，小时候的你都佩服`
+    : `60 秒套中了 <b>${score} / ${ringTotal}</b> 个圈<br/>就差一点，多按两下吹气再试试`;
   startBtn.textContent = '再来一局';
   overlay.classList.remove('hidden');
   if (many) sfx.victory(); else sfx.sad();
 }
-startBtn.addEventListener('click', startGame);
+/* The big button does double duty: on the closed screen it reopens the
+   home screen; everywhere else it starts a game. */
+function primaryAction() {
+  if (closed) { closed = false; resetGame(); renderModeInfo(); return; }
+  startGame();
+}
+startBtn.addEventListener('click', primaryAction);
+
+/* Mode select on the home screen: three versions, picked before Start. */
+const modeRow = document.getElementById('modeRow');
+const hintEl = document.getElementById('hint');
+function renderModeInfo() {
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('selected', b.dataset.mode === mode));
+  modeRow.style.display = '';
+  ovTitle.textContent = '水中套圈';
+  ovText.innerHTML = MODES[mode].desc;
+  startBtn.textContent = `开始${MODES[mode].name} · 60 秒`;
+  if (hintEl) hintEl.textContent = MODES[mode].howto;
+}
+modeRow.addEventListener('click', e => {
+  const btn = e.target.closest('.mode-btn');
+  if (!btn) return;
+  ensureAudio();
+  mode = btn.dataset.mode;
+  renderModeInfo();
+});
+renderModeInfo();
+
+/* Long-press anywhere must never select text or pop the copy-paste menu:
+   the whole page is a game controller, not a document. */
+document.addEventListener('selectstart', e => e.preventDefault());
+document.addEventListener('contextmenu', e => e.preventDefault());
+
+/* Home + Close: no more waiting out the 60 seconds or killing the page.
+   Home stops the round and goes back to the mode-select screen; Close
+   tries to close the page, and if the browser won't let it, shows a
+   closed screen with a way back in. */
+function stopRound() {
+  state = 'idle'; stopBGM(); stopJetNoise();
+  JETS.left.active = JETS.right.active = false;
+  document.querySelectorAll('.pump').forEach(b => b.classList.remove('pressed'));
+}
+document.getElementById('homeBtn').addEventListener('click', () => {
+  ensureAudio(); stopRound(); resetGame(); renderModeInfo();
+  overlay.classList.remove('hidden');
+});
+document.getElementById('closeBtn').addEventListener('click', () => {
+  ensureAudio(); stopRound(); closed = true;
+  try { window.close(); } catch (e) {}
+  modeRow.style.display = 'none';
+  ovTitle.textContent = '游戏已关闭';
+  ovText.innerHTML = '谢谢游玩！<br/>想再玩就点下面的按钮';
+  startBtn.textContent = '重新打开游戏';
+  overlay.classList.remove('hidden');
+});
 
 /* ============ Input: rotary pump knobs - one fluid gesture ============
    There are NO modes. Touching a knob blows IMMEDIATELY and keeps blowing
@@ -348,12 +457,21 @@ const KEYMAP = { a: 'left', arrowleft: 'left', d: 'right', arrowright: 'right' }
 document.addEventListener('keydown', e => {
   const j = KEYMAP[e.key.toLowerCase()];
   if (j) { ensureAudio(); JETS[j].active = true; document.getElementById(j + 'Btn').classList.add('pressed'); }
-  if (e.key === ' ' && state !== 'playing') { e.preventDefault(); startGame(); }
+  if (e.key === ' ' && state !== 'playing') { e.preventDefault(); primaryAction(); }
 });
 document.addEventListener('keyup', e => {
   const j = KEYMAP[e.key.toLowerCase()];
   if (j) { JETS[j].active = false; document.getElementById(j + 'Btn').classList.remove('pressed'); }
 });
+
+/* Last 6 seconds of the invincible version: a few free rings fly onto the poles by themselves. */
+function autoLandRings() {
+  const free = rings.filter(r => r.state === 'free').sort((a, b) => b.y - a.y); // lowest first: nearest the pole bases
+  free.slice(0, 4).forEach(r => {
+    const p = POLES[0].landed <= POLES[1].landed ? POLES[0] : POLES[1];
+    r.state = 'landing'; r.pole = POLES.indexOf(p); r.slot = p.landed++; r.vx = r.vy = 0;
+  });
+}
 
 /* ============ Physics ============ */
 function spawnBubble(x, y, big = false, vx = 0, vy = null) {
@@ -362,6 +480,11 @@ function spawnBubble(x, y, big = false, vx = 0, vy = null) {
 }
 function stepPhysics(t) {
   updateJetDir(JETS.left); updateJetDir(JETS.right);
+  /* hard version: both poles slide left-right together, keeping their distance */
+  if (mode === 'hard' && state === 'playing') {
+    const off = Math.sin(poleClock / 850) * 55;
+    POLES.forEach(p => p.x = p.baseX + off);
+  }
   const jetOn = JETS.left.active || JETS.right.active;
   if (jetOn && state === 'playing') {
     for (const k of ['left', 'right']) if (JETS[k].active) {
@@ -395,7 +518,7 @@ function stepPhysics(t) {
       r.vy += 0.03 + Math.cos(t / 800 + r.x * 0.01) * 0.006;
       r.vx += Math.sin(t / 700 + r.y * 0.012 + r.phase) * 0.02;
       if (Math.abs(r.x - CENTER_VENT.x) < 66 && r.y > 150) r.vy -= 0.07; // gentle centre vent, wider range, same strength
-      if (r.y < DRIFT_LIMIT) r.vy += 0.14;
+      if (r.y < driftLimit()) r.vy += 0.14;
       r.vy *= 0.965; r.vx *= 0.982;
       r.x += r.vx; r.y += r.vy;
       r.angle = Math.max(-0.5, Math.min(0.5, r.angle + r.vx * 0.01));
@@ -408,13 +531,13 @@ function stepPhysics(t) {
   }
 
   for (const r of rings) {
-    if (r.state === 'landed') continue;
+    if (r.state === 'landed') { r.x = POLES[r.pole].x; continue; } // landed rings ride the moving poles
     if (r.state === 'landing') {
       const p = POLES[r.pole], targetY = p.baseY - 20 - r.slot * 15;
       r.y += 3.2; r.x += (p.x - r.x) * 0.35; r.angle *= 0.8;
       if (r.y >= targetY) {
         r.y = targetY; r.state = 'landed'; score++; updateHUD(); sfx.success();
-        if (score >= 12) { setTimeout(endGame, 450); state = 'ending'; }
+        if (score >= ringTotal) { setTimeout(endGame, 450); state = 'ending'; }
       }
       continue;
     }
@@ -435,10 +558,10 @@ function stepPhysics(t) {
       const perpX = relX - along * j.dx, perpY = relY - along * j.dy;
       const perp = Math.hypot(perpX, perpY);                  // distance from the jet axis
       if (along > 0 && along < 430 && perp < 46 + along * 0.17) {
-        const a = 0.78 * (1 - along / 470);
+        const a = (mode === 'easy' ? 1.15 : 0.78) * (1 - along / 470);
         r.vx += j.dx * a + (Math.random() - 0.5) * 0.1;
         r.vy += j.dy * a + (Math.random() - 0.5) * 0.06;
-        r.lift = 26;
+        r.lift = mode === 'easy' ? 40 : 26;
       }
     }
     /* centre vent: weak & slow, stirs the water and nudges rings, but never sets lift.
@@ -447,9 +570,10 @@ function stepPhysics(t) {
       r.vy -= 0.15;
       r.vx += Math.sin(t / 900 + r.y * 0.012) * 0.012;
     }
-    /* --- key rule: on its own a ring can NOT rise above the drift limit --- */
-    if (r.lift <= 0 && r.y < DRIFT_LIMIT) r.vy += 0.16;
-    if (r.lift <= 0 && r.y < DRIFT_LIMIT - 42 && r.vy < 0.25) r.vy = 0.25;
+    /* --- key rule: on its own a ring can NOT rise above the drift limit ---
+       (invincible version: the limit is much higher, so rings float almost to the tips) */
+    if (r.lift <= 0 && r.y < driftLimit()) r.vy += 0.16;
+    if (r.lift <= 0 && r.y < driftLimit() - 42 && r.vy < 0.25) r.vy = 0.25;
 
     r.vy *= 0.965; r.vx *= 0.982;
     r.vy = Math.max(-5.2, Math.min(2.3, r.vy));
@@ -476,7 +600,8 @@ function stepPhysics(t) {
       if (r.state !== 'free') return;
       const dx = r.x - p.x;
       // landing: falling, centred, centre crosses the tip
-      if (r.vy > 0.15 && Math.abs(dx) < 11 && r.prevY < p.tipY && r.y >= p.tipY) {
+      const catchW = mode === 'easy' ? 22 : 11; // invincible version: a much wider catch
+      if (r.vy > 0.1 && Math.abs(dx) < catchW && r.prevY < p.tipY && r.y >= p.tipY) {
         r.state = 'landing'; r.pole = pi; r.slot = p.landed++; r.vx = r.vy = 0;
         return;
       }
@@ -706,6 +831,8 @@ function frame(now) {
   const dt = Math.min(50, now - lastTime); lastTime = now;
   if (state === 'playing') {
     timeLeft -= dt / 1000;
+    poleClock += dt;
+    if (mode === 'easy' && !autoDone && timeLeft <= 6) { autoDone = true; autoLandRings(); }
     const s = Math.ceil(timeLeft);
     if (s <= 10 && s >= 1 && !alerted10) { alerted10 = true; sfx.countStart(); }
     if (s <= 10 && s >= 1 && s !== lastTickSecond) { lastTickSecond = s; sfx.countDown(s); }

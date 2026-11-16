@@ -24,6 +24,8 @@
         <div class="lcd gold" id="score">RING 0 / 12</div>
         <button class="bgm-btn" id="bgmBtn" type="button">♪ BGM 开</button>
         <button class="bgm-btn" id="sfxBtn" type="button">🔊 音效 开</button>
+        <button class="bgm-btn" id="homeBtn" type="button">🏠 首页</button>
+        <button class="bgm-btn" id="closeBtn" type="button">✕ 关闭</button>
         <button class="sound-btn" id="soundBtn" type="button">🔊 点我开启声音</button>
       </div>
     </header>
@@ -34,7 +36,12 @@
         <div class="overlay" id="overlay">
           <h2 id="ovTitle">水中套圈</h2>
           <p id="ovText">12 个圈都在水里自己飘，但飘不到杆顶<br/>按住左右吹气按钮，把圈吹过杆尖套进去！</p>
-          <button id="startBtn" type="button">开始游戏 · 60 秒</button>
+          <div class="mode-row" id="modeRow">
+            <button class="mode-btn selected" data-mode="normal" type="button">普通版<small>经典玩法</small></button>
+            <button class="mode-btn" data-mode="hard" type="button">移动版<small>杆子来回移动</small></button>
+            <button class="mode-btn" data-mode="easy" type="button">无敌版<small>试试就知道</small></button>
+          </div>
+          <button id="startBtn" type="button">开始普通版 · 60 秒</button>
           <p class="ov-small">键盘：A / ← 左吹气 · D / → 右吹气（按住）· 旋钮可拖动旋转调角度</p>
         </div>
       </div>
@@ -59,7 +66,7 @@
     <footer class="foot">RETRO PLASTIC TOY · NO. 92-08 · MADE FOR CHILDHOOD</footer>
   </main>
 
-  <p class="hint">玩法：点开始后圈会自己慢慢飘（但到不了杆顶）→ 按住吹气把圈吹上去 → 对准杆尖落下套住。60 秒内套中越多越好，套中 6 个以上有胜利结局音效！</p>
+  <p class="hint" id="hint">玩法：点开始后圈会自己慢慢飘（但到不了杆顶）→ 按住吹气把圈吹上去 → 对准杆尖落下套住。60 秒内套中越多越好，套中 6 个以上有胜利结局音效！</p>
 
 <script src="script.js"></script>
 </body>
