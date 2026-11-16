@@ -166,7 +166,10 @@ const BGM_SETS = {
     [41, 48, 53, 57],  // F
     [38, 45, 50, 57],  // Dm
     [40, 44, 47, 52]   // E
-  ], interval: 950, bass: true },
+  ], interval: 950, bass: true,
+    /* a hurried chase tune on top (A-minor pentatonic, same soft sine voice):
+       A C D E | G E D C | D E G A | G E D C - "you chase me, I chase you" */
+    melody: [69, 72, 74, 76, 79, 76, 74, 72, 74, 76, 79, 81, 79, 76, 74, 72], melodyStep: 260 },
   easy: { chords: [
     [48, 52, 55, 60],  // C
     [43, 47, 50, 59],  // G
@@ -277,7 +280,7 @@ const MODES = {
     desc: '12 个圈都在水里自己飘，但飘不到杆顶<br/>按住左右吹气按钮，把圈吹过杆尖套进去！',
     howto: '玩法：点开始后圈会自己慢慢飘（但到不了杆顶）→ 按住吹气把圈吹上去 → 对准杆尖落下套住。60 秒内套中越多越好，套中 6 个以上有胜利结局音效！' },
   hard: { name: '移动版',
-    desc: '杆子会左右来回移动！<br/>等杆子移到圈的上方再吹气，套中更难啦',
+    desc: '杆子会动哦！😉',
     howto: '玩法：杆子来回移动！等杆子移到圈的上方再吹气 → 对准杆尖落下套住。60 秒内套中越多越好，套中 6 个以上有胜利结局音效！' },
   easy: { name: '无敌版',
     desc: '试试就知道！😉',
@@ -612,10 +615,11 @@ function stepPhysics(t) {
       const perpX = relX - along * j.dx, perpY = relY - along * j.dy;
       const perp = Math.hypot(perpX, perpY);                  // distance from the jet axis
       if (along > 0 && along < 470 && perp < 58 + along * 0.2) {
-        const a = (mode === 'easy' ? 1.15 : 0.78) * (1 - along / 470);
-        r.vx += j.dx * a + (Math.random() - 0.5) * 0.1;
+        const a = (mode === 'easy' ? 1.25 : 0.78) * (1 - along / 470);
+        const hScale = mode === 'easy' ? 0.45 : 1; // easy: mostly upward, less sideways shove
+        r.vx += j.dx * a * hScale + (Math.random() - 0.5) * 0.1;
         r.vy += j.dy * a + (Math.random() - 0.5) * 0.06;
-        r.lift = mode === 'easy' ? 40 : 26;
+        r.lift = mode === 'easy' ? 48 : 26;
       }
     }
     /* centre vent: weak & slow, stirs the water and nudges rings, but never sets lift.
@@ -624,10 +628,25 @@ function stepPhysics(t) {
       r.vy -= 0.15;
       r.vx += Math.sin(t / 900 + r.y * 0.012) * 0.012;
     }
+    /* invincible version: the poles pull nearby rings onto the tip. A falling
+       ring near a tip is steered onto it (capture funnel) and its fall is
+       slowed a touch so it has time to centre; further out there is only a
+       gentle attraction. X-only pull: it cannot lift a ring over the tip. */
+    if (mode === 'easy') {
+      for (const p of POLES) {
+        const mdx = p.x - r.x, mdy = r.y - p.tipY;
+        if (Math.abs(mdx) < 70 && mdy > -120 && mdy < 60) {
+          r.vx += mdx * 0.03;
+          if (r.vy > 0.4) r.vy *= 0.96;
+        } else if (Math.abs(mdx) < 110 && mdy > -150 && mdy < 130) {
+          r.vx += mdx * 0.0025;
+        }
+      }
+    }
     /* --- key rule: on its own a ring can NOT rise above the drift limit ---
        (invincible version: the limit is much higher, so rings float almost to the tips) */
     if (r.lift <= 0 && r.y < driftLimit()) r.vy += 0.16;
-    if (r.lift <= 0 && r.y < driftLimit() - 42 && r.vy < 0.25) r.vy = 0.25;
+    if (r.lift <= 0 && r.y < driftLimit() - 42 && r.vy < 0.25) r.vy = mode === 'easy' ? 0.9 : 0.25; // easy: blown rings come down promptly onto the poles instead of hovering
 
     r.vy *= 0.965; r.vx *= 0.982;
     r.vy = Math.max(-5.2, Math.min(2.3, r.vy));
@@ -654,14 +673,15 @@ function stepPhysics(t) {
       if (r.state !== 'free') return;
       const dx = r.x - p.x;
       // landing: falling, centred, centre crosses the tip
-      const catchW = mode === 'easy' ? 22 : 11; // invincible version: a much wider catch
+      const catchW = mode === 'easy' ? 45 : 11; // invincible version: a much wider catch
       if (r.vy > 0.1 && Math.abs(dx) < catchW && r.prevY < p.tipY && r.y >= p.tipY) {
         r.state = 'landing'; r.pole = pi; r.slot = p.landed++; r.vx = r.vy = 0;
         return;
       }
-      // bounce off the tip
+      // bounce off the tip (invincible version: almost no bounce - rings slip on)
       const dTip = Math.hypot(dx, r.y - p.tipY);
-      if (dTip < 30 && Math.abs(dx) >= 11) {
+      const bounceDx = mode === 'easy' ? 45 : 11;
+      if (dTip < 30 && Math.abs(dx) >= bounceDx) {
         const nx = dx / (dTip || 1), ny = (r.y - p.tipY) / (dTip || 1);
         r.x = p.x + nx * 30; r.y = p.tipY + ny * 30;
         r.vx = nx * 1.5; r.vy = Math.min(r.vy, ny * 1.2);
